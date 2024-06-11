@@ -118,7 +118,7 @@ def register():
     db.session.add(new_user)
     db.session.commit()
     login_user(new_user)
-    return redirect(url_for("get_all_posts"))
+    return jsonify({"message": "Login successful!"}), 200
 
 
 @app.route('/login', methods=["POST"])
@@ -127,14 +127,13 @@ def login():
 
     email = data.get('email')
     password = data.get('password')
-    print(email,password)
 
-    # user = User.query.filter_by(email=email).first()
-    # if not user or not check_password_hash(user.password, password):
-    #     return jsonify({"error": "Invalid email or password. Please try again."}), 401 
-    # else:
-    # login_user(user) 
-    return jsonify({"message": "Login successful!"}), 200
+    user = User.query.filter_by(email=email).first()
+    if not user or not check_password_hash(user.password, password):
+        return jsonify({"error": "Invalid email or password. Please try again."}), 401 
+    else:
+        login_user(user) 
+        return jsonify({"message": "Login successful!"}), 200
 
 @app.route('/logout')
 def logout():
