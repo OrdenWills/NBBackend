@@ -92,55 +92,49 @@ def home():
     return jsonify([product.to_dict() for product in products])
 
 # ... (your existing routes for registration, login, logout) ...
-@app.route('/register', methods=["GET", "POST"])
+@app.route('/register', methods=["POST"])
 def register():
-    form = RegisterForm()
-    if form.validate_on_submit():
+    data = request.get_json()
+    # extract the data
+    email = data.get('email')
+    password = data.get('password')
+    name = data.get('name')
 
-        if User.query.filter_by(email=form.email.data).first():
-            print(User.query.filter_by(email=form.email.data).first())
-            #User already exists
-            flash("You've already signed up with that email, log in instead!")
-            return redirect(url_for('login'))
-
-        hash_and_salted_password = generate_password_hash(
-            form.password.data,
-            method='pbkdf2:sha256',
-            salt_length=8
-        )
-        new_user = User(
-            email=form.email.data,
-            name=form.name.data,
-            password=hash_and_salted_password,
-        )
-        db.session.add(new_user)
-        db.session.commit()
-        login_user(new_user)
-        return redirect(url_for("get_all_posts"))
-
-    return render_template("", form=form, current_user=current_user)
+    existing_user = User.query.filter_by(email=email).first()
+    if existing_user:
+        return jsonify({"error": "User with this email already exists"}), 409  # Conflict
 
 
-# @app.route('/login', methods=["GET", "POST"])
-# def login():
-#     form = LoginForm()
-#     if form.validate_on_submit():
-#         email = form.email.data
-#         password = form.password.data
+    hash_and_salted_password = generate_password_hash(
+        password,
+        method='pbkdf2:sha256',
+        salt_length=8
+    )
+    new_user = User(
+        email=email,
+        name=name,
+        password=hash_and_salted_password,
+    )
+    db.session.add(new_user)
+    db.session.commit()
+    login_user(new_user)
+    return redirect(url_for("get_all_posts"))
 
-#         user = User.query.filter_by(email=email).first()
-#         # Email doesn't exist or password incorrect.
-#         if not user:
-#             flash("That email does not exist, please try again.")
-#             return redirect(url_for('login'))
-#         elif not check_password_hash(user.password, password):
-#             flash('Password incorrect, please try again.')
-#             return redirect(url_for('login'))
-#         else:
-#             login_user(user)
-#             return redirect(url_for('get_all_posts'))
-#     return render_template("login.html", form=form, current_user=current_user)
 
+@app.route('/login', methods=["POST"])
+def login():
+    data = request.get_json()
+
+    email = data.get('email')
+    password = data.get('password')
+    print(email,password)
+
+    # user = User.query.filter_by(email=email).first()
+    # if not user or not check_password_hash(user.password, password):
+    #     return jsonify({"error": "Invalid email or password. Please try again."}), 401 
+    # else:
+    # login_user(user) 
+    return jsonify({"message": "Login successful!"}), 200
 
 @app.route('/logout')
 def logout():
