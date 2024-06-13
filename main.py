@@ -33,6 +33,9 @@ class User(UserMixin, db.Model):
     password = db.Column(db.String(100), nullable=False)
     # ... (You might add more user fields here) ...
 
+
+
+
 class Vendor(db.Model):
     __tablename__ = "vendors"
     id = db.Column(db.Integer, primary_key=True)
@@ -98,7 +101,7 @@ def register():
     # extract the data
     email = data.get('email')
     password = data.get('password')
-    name = data.get('name')
+    username = data.get('name')
 
     existing_user = User.query.filter_by(email=email).first()
     if existing_user:
@@ -112,7 +115,7 @@ def register():
     )
     new_user = User(
         email=email,
-        name=name,
+        name=username,
         password=hash_and_salted_password,
     )
     db.session.add(new_user)
