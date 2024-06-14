@@ -101,7 +101,7 @@ def register():
     # extract the data
     email = data.get('email')
     password = data.get('password')
-    username = data.get('name')
+    username = data.get('username')
 
     existing_user = User.query.filter_by(email=email).first()
     if existing_user:
@@ -115,7 +115,7 @@ def register():
     )
     new_user = User(
         email=email,
-        name=username,
+        username=username,
         password=hash_and_salted_password,
     )
     db.session.add(new_user)
