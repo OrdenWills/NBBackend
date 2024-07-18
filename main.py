@@ -43,6 +43,8 @@ class Vendor(db.Model):
     email = db.Column(db.String(255), nullable=False)
     phone = db.Column(db.String(20))
     location = db.Column(db.String(255))
+    latitude = db.Column(db.Float, nullable=False)  # Add latitude
+    longitude = db.Column(db.Float, nullable=False) # Add longitude
     # ... (You might add more vendor fields here) ...
 
 class Product(db.Model):
@@ -143,6 +145,22 @@ def logout():
     logout_user()
     return redirect(url_for('get_all_posts'))
 
+# Vendor location
+@app.route('/vendors/locations') 
+def get_vendor_locations():
+    vendors = Vendor.query.all() 
+
+    vendor_locations = [
+        {
+            'id': vendor.id,
+            'latitude': vendor.latitude,
+            'longitude': vendor.longitude,
+            'category': vendor.category,
+            'name': vendor.name
+        }
+        for vendor in vendors
+    ]
+    return jsonify(vendor_locations)
 
 # Products API Endpoints
 @app.route('/api/products')
