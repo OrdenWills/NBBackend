@@ -184,7 +184,7 @@ def logout():
 
 # Products API Endpoints
 
-@app.route('/api/add_product', methods=['POST'])
+@app.route('/api/products', methods=['POST'])
 @login_required
 def add_product():
     try:
