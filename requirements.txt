@@ -4,4 +4,9 @@ Flask-Login
 Flask-WTF
 Flask-CORS
 Flask-CKEditor
+Flask-Caching
+Flask-SocketIO
+cloudinary
 gunicorn
+cloudinary
+Werkzeug

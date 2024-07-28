@@ -3,20 +3,45 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin, login_user, LoginManager, login_required, current_user, logout_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
+from flask_caching import Cache
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from forms import RegisterForm, LoginForm  # Your forms.py 
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 import os
+
+import cloudinary
+import cloudinary.uploader
 from datetime import datetime
+import dotenv
+
+dotenv.load_dotenv('keys.env')
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = "your_secret_key" 
-app.config['SQLALCHEMY_DATABASE_URI'] = "sqlite:///nerbeedb.db"  # SQLite database
+
+# app and database config
+app.config['SECRET_KEY'] = os.getenv('APP_SECRET')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('SQLALCHEMY_DATABASE_URI')# SQLite database
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False 
 db = SQLAlchemy(app)
+
+
 CORS(app)
+
+# Socketio
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Caching
+cache = Cache(app, config={'CACHE_TYPE': 'simple'})
 login_manager = LoginManager()
 login_manager.init_app(app)
+
+# Configure Cloudinary
+cloudinary.config(
+    cloud_name='dphmp7gih',
+    api_key=os.environ.get('CLOUDINARY_API_KEY'),
+    api_secret=os.environ.get('CLOUDINARY_API_SECRET'),
+)
 
 # ... (your existing `load_user` function) ...
 @login_manager.user_loader
@@ -56,8 +81,19 @@ class Product(db.Model):
     description = db.Column(db.Text, nullable=False)
     price = db.Column(db.Float, nullable=False)
     images = db.Column(db.JSON, nullable=False)
-    category = db.Column(db.String(50), nullable=False) 
+    category = db.Column(db.String(50), nullable=False)
+    subcategory = db.Column(db.String(50))
     # ... (You might add more product fields here) ...
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'vendor_id': self.vendor_id,
+            'name': self.name,
+            'description': self.description,
+            'price': self.price,
+            'images': self.images,
+            'category': self.category
+        }
 
 class Chat(db.Model):
     __tablename__ = "chats"
@@ -96,8 +132,8 @@ def home():
     products = Product.query.all()
     return jsonify([product.to_dict() for product in products])
 
-# ... (your existing routes for registration, login, logout) ...
-@app.route('/register', methods=["POST"])
+# Registration, login, logout) ...
+@app.route('/api/register', methods=["POST"])
 def register():
     data = request.get_json()
     # extract the data
@@ -126,7 +162,7 @@ def register():
     return jsonify({"message": "Login successful!"}), 200
 
 
-@app.route('/login', methods=["POST"])
+@app.route('/api/login', methods=["POST"])
 def login():
     data = request.get_json()
 
@@ -145,8 +181,74 @@ def logout():
     logout_user()
     return redirect(url_for('get_all_posts'))
 
-# Vendor location
-@app.route('/vendors/locations') 
+
+# Products API Endpoints
+
+@app.route('/api/products', methods=['POST'])
+@login_required
+def add_product():
+    try:
+        # Ensure the user is a vendor (you may need to adjust this based on your user model)
+        if not current_user.is_vendor:
+            return jsonify({"error": "Only vendors can add products"}), 403
+
+        name = request.form.get('name')
+        description = request.form.get('description')
+        price = request.form.get('price')
+        category = request.form.get('category')
+        subcategory = request.form.get('subcategory')
+        
+        # Handle image uploads
+        image_urls = []
+        if 'images' in request.files:
+            images = request.files.getlist('images')
+            for image in images:
+                result = cloudinary.uploader.upload(image) # Cloudinary upload 
+                image_urls.append(result['secure_url'])
+
+        new_product = Product(
+            vendor_id=current_user.id,
+            name=name,
+            description=description,
+            price=float(price),
+            images=image_urls,
+            category=category,
+            subcategory=subcategory
+        )
+
+        db.session.add(new_product)
+        db.session.commit()
+
+        return jsonify({"message": "Product added successfully", "product_id": new_product.id}), 201
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/products')
+def get_products():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    products = Product.query.paginate(page=page, per_page=per_page, error_out=False)
+    return jsonify({
+        'products': [product.to_dict() for product in products.items],
+        'total': products.total,
+        'pages': products.pages,
+        'current_page': products.page
+    })
+
+@cache.cached(timeout=300)  # Cache for 5 minutes
+@app.route('/api/products/<int:product_id>')
+def get_product(product_id):
+    product = Product.query.get(product_id)
+    if product:
+        return jsonify(product.to_dict())
+    else:
+        return jsonify({"error": "Product not found"}), 404
+
+# Vendor handling (locations and details)
+
+@app.route('/api/vendors/locations') 
 def get_vendor_locations():
     vendors = Vendor.query.all() 
 
@@ -162,27 +264,47 @@ def get_vendor_locations():
     ]
     return jsonify(vendor_locations)
 
-# Products API Endpoints
-@app.route('/api/products')
-def get_products():
-    products = Product.query.all()
-    return jsonify([product.to_dict() for product in products])
-
-@app.route('/api/products/<int:product_id>')
-def get_product(product_id):
-    product = Product.query.get(product_id)
-    if product:
-        return jsonify(product.to_dict())
+@app.route('/api/vendors/<int:vendor_id>')
+def get_vendor(vendor_id):
+    vendor = Vendor.query.get(vendor_id)
+    if vendor:
+        return jsonify({
+            'id': vendor.id,
+            'name': vendor.name,
+            'email': vendor.email,
+            'phone': vendor.phone,
+            'location': vendor.location,
+            'latitude': vendor.latitude,
+            'longitude': vendor.longitude
+        })
     else:
-        return jsonify({"error": "Product not found"}), 404
+        return jsonify({"error": "Vendor not found"}), 404
 
 # ... (Your existing code for admin-only routes) ...
 
 # Chat API Endpoints
+
 @app.route('/api/chats', methods=['POST'])
 @login_required
 def create_chat():
-    # ... (Get user_id and vendor_id from the request) ...
+    data = request.json
+    if not data or 'user_id' not in data or 'vendor_id' not in data:
+        return jsonify({"error": "Missing required fields"}), 400
+
+    user_id = data['user_id']
+    vendor_id = data['vendor_id']
+
+    # Check if the user and vendor exist
+    user = User.query.get(user_id)
+    vendor = Vendor.query.get(vendor_id)
+    if not user or not vendor:
+        return jsonify({"error": "User or vendor not found"}), 404
+
+    # Check if a chat already exists between the user and vendor
+    existing_chat = Chat.query.filter_by(user_id=user_id, vendor_id=vendor_id).first()
+    if existing_chat:
+        return jsonify({"chat_id": existing_chat.id, "message": "Chat already exists"}), 200
+
     new_chat = Chat(user_id=user_id, vendor_id=vendor_id)
     db.session.add(new_chat)
     db.session.commit()
@@ -191,17 +313,65 @@ def create_chat():
 @app.route('/api/chats/<int:chat_id>/messages', methods=['GET'])
 @login_required
 def get_messages(chat_id):
-    messages = Message.query.filter_by(chat_id=chat_id).all()
-    return jsonify([message.to_dict() for message in messages])
+    try:
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+        
+        chat = Chat.query.get(chat_id)
+        if not chat:
+            return jsonify({"error": "Chat not found"}), 404
 
-@app.route('/api/chats/<int:chat_id>/messages', methods=['POST'])
-@login_required
-def send_message(chat_id):
-    # ... (Get message text and sender_id from the request) ...
-    new_message = Message(chat_id=chat_id, sender_id=sender_id, text=text)
-    db.session.add(new_message)
-    db.session.commit()
-    return jsonify({"message_id": new_message.id}), 201
+        if current_user.id != chat.user_id and current_user.id != chat.vendor_id:
+            return jsonify({"error": "Unauthorized access"}), 403
+
+        messages = Message.query.filter_by(chat_id=chat_id).order_by(Message.timestamp.desc()).paginate(page=page, per_page=per_page)
+        
+        return jsonify({
+            'messages': [message.to_dict() for message in messages.items],
+            'total': messages.total,
+            'pages': messages.pages,
+            'current_page': messages.page
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# Socket.IO events
+@socketio.on('join')
+def on_join(data):
+    room = data['chatId']
+    join_room(room)
+    emit('status', {'msg': f"User has joined the chat."}, room=room)
+
+@socketio.on('leave')
+def on_leave(data):
+    room = data['chatId']
+    leave_room(room)
+    emit('status', {'msg': f"User has left the chat."}, room=room)
+
+@socketio.on('sendMessage')
+def handle_message(data):
+    try:
+        chat_id = data['chatId']
+        sender_id = data['userId']
+        text = data['text']
+
+        # Validate the chat and sender
+        chat = Chat.query.get(chat_id)
+        if not chat:
+            raise ValueError("Chat not found")
+
+        if sender_id != chat.user_id and sender_id != chat.vendor_id:
+            raise ValueError("Invalid sender")
+
+        new_message = Message(chat_id=chat_id, sender_id=sender_id, text=text)
+        db.session.add(new_message)
+        db.session.commit()
+
+        emit('message', new_message.to_dict(), room=chat_id)
+    except Exception as e:
+        db.session.rollback()
+        emit('error', {'message': str(e)}, room=request.sid)
 
 
 if __name__ == "__main__":
